@@ -10,6 +10,7 @@ function onOpen() {
       .addItem('Create New Quarter Sheet', 'createQuarterSheet')
       .addItem('Add Assignment to Calendar', 'addAssignmentToCalendar')
       .addItem('Sync All Assignments to Calendar', 'syncAllToCalendar')
+  .addItem('Setup Classes & Recurring', 'setupClassesAndRecurringAssignments')
       .addToUi();
 }
 
@@ -67,7 +68,11 @@ function setupSheetHeaders(sheet) {
     'Priority',
     'Status',
     'Notes',
-    'Calendar Event ID'
+    'Calendar Event ID',
+    'Quiz',
+    'Midterm',
+    'Final Exam',
+    'iCalendar File URL'
   ];
   
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
@@ -95,11 +100,40 @@ function formatSheet(sheet) {
   sheet.setColumnWidth(6, 120); // Status
   sheet.setColumnWidth(7, 250); // Notes
   sheet.setColumnWidth(8, 150); // Calendar Event ID (hidden)
+  sheet.setColumnWidth(9, 90);  // Quiz
+  sheet.setColumnWidth(10, 90); // Midterm
+  sheet.setColumnWidth(11, 100); // Final Exam
+  sheet.setColumnWidth(12, 220); // iCalendar File URL
   
   // Add data validation for Priority column (E)
   var priorityRule = SpreadsheetApp.newDataValidation()
     .requireValueInList(['High', 'Medium', 'Low'], true)
     .setAllowInvalid(false)
+  
+  // Ask how many classes and their names for this term
+  var classesCountResp = ui.prompt('Classes This Term', 'How many classes are you taking this term?', ui.ButtonSet.OK_CANCEL);
+  if (classesCountResp.getSelectedButton() != ui.Button.OK) {
+    return;
+  }
+  var classesCount = parseInt(classesCountResp.getResponseText(), 10);
+  if (!classesCount || classesCount <= 0 || classesCount > 20) {
+    ui.alert('Please enter a valid number of classes (1-20).');
+    return;
+  }
+  var classes = [];
+  for (var i = 1; i <= classesCount; i++) {
+    var classResp = ui.prompt('Class ' + i, 'Enter class name:', ui.ButtonSet.OK_CANCEL);
+    if (classResp.getSelectedButton() != ui.Button.OK) {
+      return;
+    }
+    var className = classResp.getResponseText().trim();
+    if (!className) {
+      ui.alert('Class name cannot be empty. Try again.');
+      i--; // retry this index
+      continue;
+    }
+    classes.push(className);
+  }
     .build();
   sheet.getRange('E2:E1000').setDataValidation(priorityRule);
   
@@ -116,6 +150,17 @@ function formatSheet(sheet) {
     .setBackground('#f4cccc')
     .setRanges([sheet.getRange('E2:E1000')])
     .build();
+  
+  // Set data validation for Course column based on entered classes
+  try {
+    var courseRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(classes, true)
+      .setAllowInvalid(false)
+      .build();
+    sheet.getRange('B2:B1000').setDataValidation(courseRule);
+  } catch (e) {
+    Logger.log('Error setting course validation: ' + e.message);
+  }
   
   var mediumPriorityRule = SpreadsheetApp.newConditionalFormatRule()
     .whenTextEqualTo('Medium')
@@ -149,8 +194,11 @@ function formatSheet(sheet) {
   // Hide the Calendar Event ID column
   sheet.hideColumns(8);
   
+  // Add checkboxes for Quiz/Midterm/Final
+  sheet.getRange('I2:K1000').insertCheckboxes();
+
   // Add alternating row colors
-  sheet.getRange('A2:H1000').applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY);
+  sheet.getRange('A2:L1000').applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY);
 }
 
 /**
@@ -168,7 +216,7 @@ function addAssignmentToCalendar() {
     return;
   }
   
-  var data = sheet.getRange(row, 1, 1, 8).getValues()[0];
+  var data = sheet.getRange(row, 1, 1, 12).getValues()[0];
   var assignmentName = data[0];
   var course = data[1];
   var dueDate = data[2];
@@ -177,6 +225,10 @@ function addAssignmentToCalendar() {
   var status = data[5];
   var notes = data[6];
   var eventId = data[7];
+  var isQuiz = data[8];
+  var isMidterm = data[9];
+  var isFinal = data[10];
+  var icsUrl = data[11];
   
   if (!assignmentName || !dueDate) {
     ui.alert('Assignment Name and Due Date are required.');
@@ -204,6 +256,9 @@ function addAssignmentToCalendar() {
     if (priority) eventDescription += 'Priority: ' + priority + '\n';
     if (status) eventDescription += 'Status: ' + status + '\n';
     if (notes) eventDescription += 'Notes: ' + notes + '\n';
+    if (isQuiz === true) eventDescription += 'Type: Quiz\n';
+    if (isMidterm === true) eventDescription += 'Type: Midterm\n';
+    if (isFinal === true) eventDescription += 'Type: Final Exam\n';
     
     var event;
     
@@ -216,23 +271,32 @@ function addAssignmentToCalendar() {
           event.setTitle(eventTitle);
           event.setTime(eventDate, new Date(eventDate.getTime() + 60*60000)); // 1 hour duration
           event.setDescription(eventDescription);
+          // Update ICS file
+          var icsLinkUpdated = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
+          sheet.getRange(row, 12).setValue(icsLinkUpdated);
           ui.alert('Calendar event updated successfully!');
         } else {
           // Event was deleted, create new one
           event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
           sheet.getRange(row, 8).setValue(event.getId());
+          var icsLinkCreated1 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
+          sheet.getRange(row, 12).setValue(icsLinkCreated1);
           ui.alert('Calendar event created successfully!');
         }
       } catch (e) {
         // Event ID is invalid, create new one
         event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
         sheet.getRange(row, 8).setValue(event.getId());
+        var icsLinkCreated2 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
+        sheet.getRange(row, 12).setValue(icsLinkCreated2);
         ui.alert('Calendar event created successfully!');
       }
     } else {
       // Create new event
       event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
       sheet.getRange(row, 8).setValue(event.getId());
+      var icsLinkCreated3 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
+      sheet.getRange(row, 12).setValue(icsLinkCreated3);
       ui.alert('Calendar event created successfully!');
     }
     
@@ -284,7 +348,7 @@ function syncAllToCalendar() {
     return;
   }
   
-  var data = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  var data = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
   var calendar = CalendarApp.getDefaultCalendar();
   var successCount = 0;
   var errorCount = 0;
@@ -298,6 +362,9 @@ function syncAllToCalendar() {
     var status = data[i][5];
     var notes = data[i][6];
     var eventId = data[i][7];
+    var isQuiz = data[i][8];
+    var isMidterm = data[i][9];
+    var isFinal = data[i][10];
     
     // Skip empty rows
     if (!assignmentName || !dueDate) {
@@ -323,6 +390,9 @@ function syncAllToCalendar() {
       if (priority) eventDescription += 'Priority: ' + priority + '\n';
       if (status) eventDescription += 'Status: ' + status + '\n';
       if (notes) eventDescription += 'Notes: ' + notes + '\n';
+      if (isQuiz === true) eventDescription += 'Type: Quiz\n';
+      if (isMidterm === true) eventDescription += 'Type: Midterm\n';
+      if (isFinal === true) eventDescription += 'Type: Final Exam\n';
       
       var event;
       
@@ -334,17 +404,25 @@ function syncAllToCalendar() {
             event.setTitle(eventTitle);
             event.setTime(eventDate, new Date(eventDate.getTime() + 60*60000));
             event.setDescription(eventDescription);
+            var icsLinkU = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
+            sheet.getRange(i + 2, 12).setValue(icsLinkU);
           } else {
             event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
             sheet.getRange(i + 2, 8).setValue(event.getId());
+            var icsLinkC1 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
+            sheet.getRange(i + 2, 12).setValue(icsLinkC1);
           }
         } catch (e) {
           event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
           sheet.getRange(i + 2, 8).setValue(event.getId());
+          var icsLinkC2 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
+          sheet.getRange(i + 2, 12).setValue(icsLinkC2);
         }
       } else {
         event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
         sheet.getRange(i + 2, 8).setValue(event.getId());
+        var icsLinkC3 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
+        sheet.getRange(i + 2, 12).setValue(icsLinkC3);
       }
       
       successCount++;
@@ -358,6 +436,123 @@ function syncAllToCalendar() {
            successCount + ' assignment(s) synced successfully.\n' + 
            errorCount + ' error(s) occurred.',
            ui.ButtonSet.OK);
+}
+
+function formatICSDate(dt) {
+  var iso = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'yyyyMMdd\'T\'HHmmss\'Z\'');
+  return iso;
+}
+
+function escapeICS(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '')
+    .replace(/,/g, '\\,')
+    .replace(/;/g, '\\;');
+}
+
+function getOrCreateICSFolder() {
+  var it = DriveApp.getFoldersByName('AssignmentTracker ICS');
+  if (it.hasNext()) return it.next();
+  return DriveApp.createFolder('AssignmentTracker ICS');
+}
+
+function createICSFileForEvent(title, startDate, endDate, description) {
+  var content = 'BEGIN:VCALENDAR\r\n' +
+    'VERSION:2.0\r\n' +
+    'PRODID:-//Assignment Tracker//EN\r\n' +
+    'BEGIN:VEVENT\r\n' +
+    'UID:' + Utilities.getUuid() + '\r\n' +
+    'DTSTAMP:' + formatICSDate(new Date()) + '\r\n' +
+    'DTSTART:' + formatICSDate(startDate) + '\r\n' +
+    'DTEND:' + formatICSDate(endDate) + '\r\n' +
+    'SUMMARY:' + escapeICS(title) + '\r\n' +
+    'DESCRIPTION:' + escapeICS(description) + '\r\n' +
+    'END:VEVENT\r\n' +
+    'END:VCALENDAR';
+  var fileName = title + ' - ' + Utilities.formatDate(startDate, Session.getScriptTimeZone(), 'yyyyMMdd_HHmm') + '.ics';
+  var blob = Utilities.newBlob(content, 'text/calendar', fileName);
+  var folder = getOrCreateICSFolder();
+  var file = folder.createFile(blob);
+  return file.getUrl();
+}
+
+function setupClassesAndRecurringAssignments() {
+  var ui = SpreadsheetApp.getUi();
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var classesResp = ui.prompt('Setup Classes', 'Enter class names separated by commas:', ui.ButtonSet.OK_CANCEL);
+  if (classesResp.getSelectedButton() !== ui.Button.OK) return;
+  var classes = classesResp.getResponseText().split(',').map(function(c){ return c.trim(); }).filter(function(c){ return c.length; });
+  if (classes.length === 0) { ui.alert('No classes provided.'); return; }
+
+  var weeksResp = ui.prompt('Recurring Duration', 'Enter number of weeks to generate (e.g., 10):', ui.ButtonSet.OK_CANCEL);
+  if (weeksResp.getSelectedButton() !== ui.Button.OK) return;
+  var weeks = parseInt(weeksResp.getResponseText(), 10);
+  if (!weeks || weeks <= 0) { ui.alert('Invalid number of weeks.'); return; }
+
+  var startDate = new Date();
+  var startRow = sheet.getLastRow() + 1;
+
+  for (var ci = 0; ci < classes.length; ci++) {
+    var courseName = classes[ci];
+    var freqResp = ui.prompt('Recurring for ' + courseName, "Enter frequency: 'none', 'weekly', or 'biweekly':", ui.ButtonSet.OK_CANCEL);
+    if (freqResp.getSelectedButton() !== ui.Button.OK) continue;
+    var freq = String(freqResp.getResponseText()).toLowerCase();
+    if (freq !== 'weekly' && freq !== 'biweekly') continue;
+
+    var baseResp = ui.prompt('Assignment Base Name', 'For ' + courseName + ', enter base name (e.g., Homework):', ui.ButtonSet.OK_CANCEL);
+    if (baseResp.getSelectedButton() !== ui.Button.OK) continue;
+    var baseName = baseResp.getResponseText().trim();
+    if (!baseName) continue;
+
+    var dayResp = ui.prompt('Due Weekday', 'For ' + courseName + ', enter weekday (Mon/Tue/Wed/Thu/Fri/Sat/Sun):', ui.ButtonSet.OK_CANCEL);
+    if (dayResp.getSelectedButton() !== ui.Button.OK) continue;
+    var dayStr = dayResp.getResponseText().trim().toLowerCase();
+    var dayMap = {sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6};
+    var dayIdx = dayMap[dayStr.substr(0,3)];
+    if (dayIdx === undefined) continue;
+
+    var timeResp = ui.prompt('Due Time', 'For ' + courseName + ', enter time HH:MM (24h):', ui.ButtonSet.OK_CANCEL);
+    if (timeResp.getSelectedButton() !== ui.Button.OK) continue;
+    var timeStr = timeResp.getResponseText().trim();
+    var tm = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+    if (!tm) continue;
+    var hour = parseInt(tm[1], 10);
+    var min = parseInt(tm[2], 10);
+
+    var occurrences = weeks * (freq === 'weekly' ? 1 : 0.5);
+    occurrences = Math.max(1, Math.floor(occurrences));
+
+    var cur = new Date(startDate);
+    var delta = (dayIdx - cur.getDay() + 7) % 7;
+    cur.setDate(cur.getDate() + delta);
+
+    for (var k = 0; k < occurrences; k++) {
+      var due = new Date(cur);
+      due.setHours(hour, min, 0, 0);
+      var name = baseName + ' ' + (k + 1);
+      var rowValues = [
+        name,
+        courseName,
+        due,
+        Utilities.formatDate(due, Session.getScriptTimeZone(), 'HH:mm'),
+        'Medium',
+        'Not Started',
+        'Auto-generated',
+        '',
+        false,
+        false,
+        false,
+        ''
+      ];
+      sheet.getRange(startRow, 1, 1, rowValues.length).setValues([rowValues]);
+      startRow++;
+      cur.setDate(cur.getDate() + (freq === 'weekly' ? 7 : 14));
+    }
+  }
+  ui.alert('Recurring assignments generated.');
 }
 
 /**
@@ -379,10 +574,10 @@ function createSampleQuarter() {
   
   // Add sample data
   var sampleData = [
-    ['Math Problem Set 5', 'MATH 101', new Date('2026-01-25'), '23:59', 'High', 'Not Started', 'Chapter 5 exercises', ''],
-    ['Literature Essay', 'ENG 201', new Date('2026-01-28'), '17:00', 'High', 'In Progress', 'Compare two novels', ''],
-    ['Lab Report', 'CHEM 105', new Date('2026-02-01'), '14:00', 'Medium', 'Not Started', 'Experiment 3 writeup', ''],
-    ['History Reading', 'HIST 150', new Date('2026-02-05'), '12:00', 'Low', 'Completed', 'Chapters 8-10', '']
+    ['Math Problem Set 5', 'MATH 101', new Date('2026-01-25'), '23:59', 'High', 'Not Started', 'Chapter 5 exercises', '', false, false, false, ''],
+    ['Literature Essay', 'ENG 201', new Date('2026-01-28'), '17:00', 'High', 'In Progress', 'Compare two novels', '', false, false, false, ''],
+    ['Lab Report', 'CHEM 105', new Date('2026-02-01'), '14:00', 'Medium', 'Not Started', 'Experiment 3 writeup', '', false, false, false, ''],
+    ['History Reading', 'HIST 150', new Date('2026-02-05'), '12:00', 'Low', 'Completed', 'Chapters 8-10', '', false, false, false, '']
   ];
   
   sheet.getRange(2, 1, sampleData.length, sampleData[0].length).setValues(sampleData);

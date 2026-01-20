@@ -76,17 +76,31 @@ Fill in the rows with your assignment information. The sheet will automatically 
 2. Use the sidebar to add or delete classes
 3. Click "Save & Close" to update the Course dropdown validation
 
-### Syncing with Calendar
+### Google Calendar Integration
 
-**Single Assignment:**
+**Add Single Assignment to Calendar:**
 1. Click any cell in the assignment row
-2. Click Assignment Tracker → Add Assignment to Calendar
-3. Calendar event and iCalendar file are created automatically
+2. Click Assignment Tracker → Add to Google Calendar
+3. Calendar event is created with reminders
 
-**All Assignments:**
-1. Click Assignment Tracker → Sync All Assignments to Calendar
+**Sync All to Google Calendar:**
+1. Click Assignment Tracker → Sync All to Google Calendar
 2. Confirm the action
-3. All assignments sync and the sheet reorganizes by week
+3. All assignments are added/updated in your calendar and sheet reorganizes by week
+
+### iCalendar Files
+
+**Generate Single iCalendar File:**
+1. Click any cell in the assignment row
+2. Click Assignment Tracker → Generate iCalendar File
+3. .ics file is created and stored in Google Drive
+4. File URL is added to the iCalendar File URL column
+
+**Generate All iCalendar Files:**
+1. Click Assignment Tracker → Generate iCalendar for All
+2. Confirm the action
+3. .ics files are created for all assignments and stored in Google Drive
+4. File URLs populate the iCalendar File URL column
 
 ### Setting Up Recurring Assignments
 
@@ -102,7 +116,7 @@ Fill in the rows with your assignment information. The sheet will automatically 
 
 ### Calendar Reminders
 
-Each calendar event includes:
+Each Google Calendar event includes:
 - Email reminder - 1 day before due date
 - Popup reminder - 1 day before due date
 - Popup reminder - 1 hour before due date

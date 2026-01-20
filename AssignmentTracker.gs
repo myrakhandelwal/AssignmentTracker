@@ -8,8 +8,13 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Assignment Tracker')
       .addItem('Create New Quarter Sheet', 'createQuarterSheet')
-      .addItem('Add Assignment to Calendar', 'addAssignmentToCalendar')
-      .addItem('Sync All Assignments to Calendar', 'syncAllToCalendar')
+      .addSeparator()
+      .addItem('Add to Google Calendar', 'addAssignmentToCalendar')
+      .addItem('Sync All to Google Calendar', 'syncAllToCalendar')
+      .addSeparator()
+      .addItem('Generate iCalendar File', 'generateICSForAssignment')
+      .addItem('Generate iCalendar for All', 'generateICSForAll')
+      .addSeparator()
       .addItem('Manage Classes', 'openClassManager')
       .addItem('Setup Classes & Recurring', 'setupClassesAndRecurringAssignments')
       .addToUi();
@@ -408,32 +413,23 @@ function addAssignmentToCalendar() {
           event.setTitle(eventTitle);
           event.setTime(eventDate, new Date(eventDate.getTime() + 60*60000)); // 1 hour duration
           event.setDescription(eventDescription);
-          // Update ICS file
-          var icsLinkUpdated = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-          sheet.getRange(row, 11).setValue(icsLinkUpdated);
           ui.alert('Calendar event updated successfully!');
         } else {
           // Event was deleted, create new one
           event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
           sheet.getRange(row, 7).setValue(event.getId());
-          var icsLinkCreated1 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-          sheet.getRange(row, 11).setValue(icsLinkCreated1);
           ui.alert('Calendar event created successfully!');
         }
       } catch (e) {
         // Event ID is invalid, create new one
         event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
         sheet.getRange(row, 7).setValue(event.getId());
-        var icsLinkCreated2 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-        sheet.getRange(row, 11).setValue(icsLinkCreated2);
         ui.alert('Calendar event created successfully!');
       }
     } else {
       // Create new event
       event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
       sheet.getRange(row, 7).setValue(event.getId());
-      var icsLinkCreated3 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-      sheet.getRange(row, 11).setValue(icsLinkCreated3);
       ui.alert('Calendar event created successfully!');
     }
     
@@ -539,25 +535,17 @@ function syncAllToCalendar() {
             event.setTitle(eventTitle);
             event.setTime(eventDate, new Date(eventDate.getTime() + 60*60000));
             event.setDescription(eventDescription);
-            var icsLinkU = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-            sheet.getRange(i + 2, 11).setValue(icsLinkU);
           } else {
             event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
             sheet.getRange(i + 2, 7).setValue(event.getId());
-            var icsLinkC1 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-            sheet.getRange(i + 2, 11).setValue(icsLinkC1);
           }
         } catch (e) {
           event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
           sheet.getRange(i + 2, 7).setValue(event.getId());
-          var icsLinkC2 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-          sheet.getRange(i + 2, 11).setValue(icsLinkC2);
         }
       } else {
         event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
         sheet.getRange(i + 2, 7).setValue(event.getId());
-        var icsLinkC3 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-        sheet.getRange(i + 2, 11).setValue(icsLinkC3);
       }
       
       successCount++;
@@ -595,6 +583,144 @@ function getOrCreateICSFolder() {
   var it = DriveApp.getFoldersByName('AssignmentTracker ICS');
   if (it.hasNext()) return it.next();
   return DriveApp.createFolder('AssignmentTracker ICS');
+}
+
+/**
+ * Generate iCalendar file for single selected assignment
+ */
+function generateICSForAssignment() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var ui = SpreadsheetApp.getUi();
+  var activeRange = sheet.getActiveRange();
+  var row = activeRange.getRow();
+  
+  if (row < 2) {
+    ui.alert('Please select a row with assignment data (row 2 or below).');
+    return;
+  }
+  
+  var data = sheet.getRange(row, 1, 1, 11).getValues()[0];
+  var assignmentName = data[0];
+  var course = data[1];
+  var dueDate = data[2];
+  var time = data[3];
+  var status = data[4];
+  var notes = data[5];
+  var isQuiz = data[7];
+  var isMidterm = data[8];
+  var isFinal = data[9];
+  
+  if (!assignmentName || !dueDate) {
+    ui.alert('Assignment Name and Due Date are required.');
+    return;
+  }
+  
+  try {
+    var eventDate = new Date(dueDate);
+    
+    if (time) {
+      var timeMatch = String(time).match(/(\d+):(\d+)/);
+      if (timeMatch) {
+        eventDate.setHours(parseInt(timeMatch[1]), parseInt(timeMatch[2]));
+      }
+    } else {
+      eventDate.setHours(23, 59);
+    }
+    
+    var eventTitle = (course ? '[' + course + '] ' : '') + assignmentName;
+    var eventDescription = 'Assignment: ' + assignmentName + '\n';
+    if (course) eventDescription += 'Course: ' + course + '\n';
+    if (status) eventDescription += 'Status: ' + status + '\n';
+    if (notes) eventDescription += 'Notes: ' + notes + '\n';
+    if (isQuiz === true) eventDescription += 'Type: Quiz\n';
+    if (isMidterm === true) eventDescription += 'Type: Midterm\n';
+    if (isFinal === true) eventDescription += 'Type: Final Exam\n';
+    
+    var endDate = new Date(eventDate.getTime() + 60*60000);
+    var icsUrl = createICSFileForEvent(eventTitle, eventDate, endDate, eventDescription);
+    sheet.getRange(row, 11).setValue(icsUrl);
+    ui.alert('iCalendar file generated successfully!');
+  } catch (e) {
+    ui.alert('Error generating iCalendar file: ' + e.message);
+  }
+}
+
+/**
+ * Generate iCalendar files for all assignments
+ */
+function generateICSForAll() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var ui = SpreadsheetApp.getUi();
+  
+  var response = ui.alert('Generate iCalendar Files', 
+                          'This will create .ics files for all assignments in this sheet. Continue?',
+                          ui.ButtonSet.YES_NO);
+  
+  if (response != ui.Button.YES) {
+    return;
+  }
+  
+  var lastRow = sheet.getLastRow();
+  
+  if (lastRow < 2) {
+    ui.alert('No assignments found in this sheet.');
+    return;
+  }
+  
+  var data = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+  var successCount = 0;
+  var errorCount = 0;
+  
+  for (var i = 0; i < data.length; i++) {
+    var assignmentName = data[i][0];
+    var course = data[i][1];
+    var dueDate = data[i][2];
+    var time = data[i][3];
+    var status = data[i][4];
+    var notes = data[i][5];
+    var isQuiz = data[i][7];
+    var isMidterm = data[i][8];
+    var isFinal = data[i][9];
+    
+    if (!assignmentName || !dueDate) {
+      continue;
+    }
+    
+    try {
+      var eventDate = new Date(dueDate);
+      
+      if (time) {
+        var timeMatch = String(time).match(/(\d+):(\d+)/);
+        if (timeMatch) {
+          eventDate.setHours(parseInt(timeMatch[1]), parseInt(timeMatch[2]));
+        }
+      } else {
+        eventDate.setHours(23, 59);
+      }
+      
+      var eventTitle = (course ? '[' + course + '] ' : '') + assignmentName;
+      var eventDescription = 'Assignment: ' + assignmentName + '\n';
+      if (course) eventDescription += 'Course: ' + course + '\n';
+      if (status) eventDescription += 'Status: ' + status + '\n';
+      if (notes) eventDescription += 'Notes: ' + notes + '\n';
+      if (isQuiz === true) eventDescription += 'Type: Quiz\n';
+      if (isMidterm === true) eventDescription += 'Type: Midterm\n';
+      if (isFinal === true) eventDescription += 'Type: Final Exam\n';
+      
+      var endDate = new Date(eventDate.getTime() + 60*60000);
+      var icsUrl = createICSFileForEvent(eventTitle, eventDate, endDate, eventDescription);
+      sheet.getRange(i + 2, 11).setValue(icsUrl);
+      successCount++;
+    } catch (e) {
+      errorCount++;
+      Logger.log('Error generating ICS for row ' + (i + 2) + ': ' + e.message);
+    }
+  }
+  
+  ui.alert('Generation Complete', 
+           successCount + ' iCalendar file(s) generated successfully.\n' + 
+           errorCount + ' error(s) occurred.',
+           ui.ButtonSet.OK);
 }
 
 function createICSFileForEvent(title, startDate, endDate, description) {

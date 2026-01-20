@@ -11,7 +11,6 @@ function onOpen() {
       .addItem('Add Assignment to Calendar', 'addAssignmentToCalendar')
       .addItem('Sync All Assignments to Calendar', 'syncAllToCalendar')
       .addItem('Manage Classes', 'openClassManager')
-      .addItem('Group Assignments by Class', 'groupByClass')
       .addItem('Setup Classes & Recurring', 'setupClassesAndRecurringAssignments')
       .addToUi();
 }
@@ -83,6 +82,9 @@ function createQuarterSheet() {
   // Store classes in sheet properties
   setSheetClasses(sheet, classes);
   
+  // Auto-group by week
+  groupByWeek();
+  
   ui.alert('Success', 'Sheet "' + quarterName + '" has been created!\nClasses: ' + classes.join(', '), ui.ButtonSet.OK);
 }
 
@@ -95,7 +97,6 @@ function setupSheetHeaders(sheet) {
     'Course',
     'Due Date',
     'Time',
-    'Priority',
     'Status',
     'Notes',
     'Calendar Event ID',
@@ -126,28 +127,20 @@ function formatSheet(sheet, classes) {
   sheet.setColumnWidth(2, 150); // Course
   sheet.setColumnWidth(3, 120); // Due Date
   sheet.setColumnWidth(4, 100); // Time
-  sheet.setColumnWidth(5, 100); // Priority
-  sheet.setColumnWidth(6, 120); // Status
-  sheet.setColumnWidth(7, 250); // Notes
-  sheet.setColumnWidth(8, 150); // Calendar Event ID (hidden)
-  sheet.setColumnWidth(9, 90);  // Quiz
-  sheet.setColumnWidth(10, 90); // Midterm
-  sheet.setColumnWidth(11, 100); // Final Exam
-  sheet.setColumnWidth(12, 220); // iCalendar File URL
+  sheet.setColumnWidth(5, 120); // Status
+  sheet.setColumnWidth(6, 250); // Notes
+  sheet.setColumnWidth(7, 150); // Calendar Event ID (hidden)
+  sheet.setColumnWidth(8, 90);  // Quiz
+  sheet.setColumnWidth(9, 90); // Midterm
+  sheet.setColumnWidth(10, 100); // Final Exam
+  sheet.setColumnWidth(11, 220); // iCalendar File URL
   
-  // Add data validation for Priority column (E)
-  var priorityRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(['High', 'Medium', 'Low'], true)
-    .setAllowInvalid(false)
-    .build();
-  sheet.getRange('E2:E1000').setDataValidation(priorityRule);
-  
-  // Add data validation for Status column (F)
+  // Add data validation for Status column (E)
   var statusRule = SpreadsheetApp.newDataValidation()
     .requireValueInList(['Not Started', 'In Progress', 'Completed', 'Submitted'], true)
     .setAllowInvalid(false)
     .build();
-  sheet.getRange('F2:F1000').setDataValidation(statusRule);
+  sheet.getRange('E2:E1000').setDataValidation(statusRule);
   
   // Set data validation for Course column based on entered classes
   try {
@@ -160,50 +153,31 @@ function formatSheet(sheet, classes) {
     Logger.log('Error setting course validation: ' + e.message);
   }
   
-  // Add conditional formatting for Priority
-  var highPriorityRule = SpreadsheetApp.newConditionalFormatRule()
-    .whenTextEqualTo('High')
-    .setBackground('#f4cccc')
-    .setRanges([sheet.getRange('E2:E1000')])
-    .build();
-  
-  var mediumPriorityRule = SpreadsheetApp.newConditionalFormatRule()
-    .whenTextEqualTo('Medium')
-    .setBackground('#fff2cc')
-    .setRanges([sheet.getRange('E2:E1000')])
-    .build();
-  
-  var lowPriorityRule = SpreadsheetApp.newConditionalFormatRule()
-    .whenTextEqualTo('Low')
-    .setBackground('#d9ead3')
-    .setRanges([sheet.getRange('E2:E1000')])
-    .build();
-  
   // Add conditional formatting for Status
   var completedRule = SpreadsheetApp.newConditionalFormatRule()
     .whenTextEqualTo('Completed')
     .setBackground('#b7e1cd')
-    .setRanges([sheet.getRange('F2:F1000')])
+    .setRanges([sheet.getRange('E2:E1000')])
     .build();
   
   var submittedRule = SpreadsheetApp.newConditionalFormatRule()
     .whenTextEqualTo('Submitted')
     .setBackground('#a4c2f4')
-    .setRanges([sheet.getRange('F2:F1000')])
+    .setRanges([sheet.getRange('E2:E1000')])
     .build();
   
   var rules = sheet.getConditionalFormatRules();
-  rules.push(highPriorityRule, mediumPriorityRule, lowPriorityRule, completedRule, submittedRule);
+  rules.push(completedRule, submittedRule);
   sheet.setConditionalFormatRules(rules);
   
   // Hide the Calendar Event ID column
-  sheet.hideColumns(8);
+  sheet.hideColumns(7);
   
   // Add checkboxes for Quiz/Midterm/Final
-  sheet.getRange('I2:K1000').insertCheckboxes();
+  sheet.getRange('H2:J1000').insertCheckboxes();
 
   // Add alternating row colors
-  sheet.getRange('A2:L1000').applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY);
+  sheet.getRange('A2:K1000').applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY);
 }
 
 /**
@@ -295,56 +269,75 @@ function saveClasses(classes) {
 }
 
 /**
- * Group assignments by class name
+ * Group assignments by week (Sunday to Saturday)
  */
-function groupByClass() {
+function groupByWeek() {
   var sheet = SpreadsheetApp.getActiveSheet();
   var lastRow = sheet.getLastRow();
   
   if (lastRow < 2) {
-    SpreadsheetApp.getUi().alert('No assignments to group.');
     return;
   }
   
-  var data = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+  var data = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
   var grouped = {};
+  var weeks = [];
   
-  // Group by course (column B, index 1)
+  // Group by week
   for (var i = 0; i < data.length; i++) {
-    var course = data[i][1] || 'Uncategorized';
-    if (!grouped[course]) grouped[course] = [];
-    grouped[course].push(data[i]);
+    var dueDate = new Date(data[i][2]);
+    if (!dueDate || isNaN(dueDate.getTime())) continue;
+    
+    // Calculate week start (Sunday)
+    var weekStart = new Date(dueDate);
+    var day = weekStart.getDay();
+    weekStart.setDate(weekStart.getDate() - day);
+    weekStart.setHours(0, 0, 0, 0);
+    
+    var weekKey = weekStart.getTime();
+    if (!grouped[weekKey]) {
+      grouped[weekKey] = [];
+      weeks.push(weekKey);
+    }
+    grouped[weekKey].push(data[i]);
   }
   
-  // Sort groups alphabetically
-  var sortedCourses = Object.keys(grouped).sort();
+  // Sort weeks
+  weeks.sort(function(a, b) { return a - b; });
   
   // Clear data rows
   if (lastRow > 1) {
-    sheet.getRange(2, 1, lastRow - 1, 12).clearContent();
+    sheet.getRange(2, 1, lastRow - 1, 11).clearContent();
   }
   
-  // Write sorted data back
+  // Write grouped data with week headers
   var row = 2;
-  for (var c = 0; c < sortedCourses.length; c++) {
-    var course = sortedCourses[c];
-    var assignments = grouped[course];
+  for (var w = 0; w < weeks.length; w++) {
+    var weekStart = new Date(weeks[w]);
+    var weekEnd = new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000);
+    var weekHeader = 'Week of ' + Utilities.formatDate(weekStart, Session.getScriptTimeZone(), 'MMM dd') + ' - ' + Utilities.formatDate(weekEnd, Session.getScriptTimeZone(), 'MMM dd');
     
-    // Sort assignments by due date
-    assignments.sort(function(a, b) {
+    // Insert week header
+    var headerRange = sheet.getRange(row, 1, 1, 11);
+    headerRange.setValue(weekHeader);
+    headerRange.setFontWeight('bold');
+    headerRange.setBackground('#e8f0fe');
+    row++;
+    
+    // Sort assignments by due date within week
+    var weekAssignments = grouped[weeks[w]];
+    weekAssignments.sort(function(a, b) {
       var dateA = new Date(a[2]) || new Date();
       var dateB = new Date(b[2]) || new Date();
       return dateA - dateB;
     });
     
-    // Write assignments for this course
-    for (var a = 0; a < assignments.length; a++) {
-      sheet.getRange(row, 1, 1, 12).setValues([assignments[a]]);
+    // Write assignments
+    for (var a = 0; a < weekAssignments.length; a++) {
+      sheet.getRange(row, 1, 1, 11).setValues([weekAssignments[a]]);
       row++;
     }
   }
-  
-  SpreadsheetApp.getUi().alert('Assignments grouped and sorted by class!');
 }
 
 /**
@@ -362,19 +355,18 @@ function addAssignmentToCalendar() {
     return;
   }
   
-  var data = sheet.getRange(row, 1, 1, 12).getValues()[0];
+  var data = sheet.getRange(row, 1, 1, 11).getValues()[0];
   var assignmentName = data[0];
   var course = data[1];
   var dueDate = data[2];
   var time = data[3];
-  var priority = data[4];
-  var status = data[5];
-  var notes = data[6];
-  var eventId = data[7];
-  var isQuiz = data[8];
-  var isMidterm = data[9];
-  var isFinal = data[10];
-  var icsUrl = data[11];
+  var status = data[4];
+  var notes = data[5];
+  var eventId = data[6];
+  var isQuiz = data[7];
+  var isMidterm = data[8];
+  var isFinal = data[9];
+  var icsUrl = data[10];
   
   if (!assignmentName || !dueDate) {
     ui.alert('Assignment Name and Due Date are required.');
@@ -399,7 +391,6 @@ function addAssignmentToCalendar() {
     var eventTitle = (course ? '[' + course + '] ' : '') + assignmentName;
     var eventDescription = 'Assignment: ' + assignmentName + '\n';
     if (course) eventDescription += 'Course: ' + course + '\n';
-    if (priority) eventDescription += 'Priority: ' + priority + '\n';
     if (status) eventDescription += 'Status: ' + status + '\n';
     if (notes) eventDescription += 'Notes: ' + notes + '\n';
     if (isQuiz === true) eventDescription += 'Type: Quiz\n';
@@ -419,30 +410,30 @@ function addAssignmentToCalendar() {
           event.setDescription(eventDescription);
           // Update ICS file
           var icsLinkUpdated = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-          sheet.getRange(row, 12).setValue(icsLinkUpdated);
+          sheet.getRange(row, 11).setValue(icsLinkUpdated);
           ui.alert('Calendar event updated successfully!');
         } else {
           // Event was deleted, create new one
           event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
-          sheet.getRange(row, 8).setValue(event.getId());
+          sheet.getRange(row, 7).setValue(event.getId());
           var icsLinkCreated1 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-          sheet.getRange(row, 12).setValue(icsLinkCreated1);
+          sheet.getRange(row, 11).setValue(icsLinkCreated1);
           ui.alert('Calendar event created successfully!');
         }
       } catch (e) {
         // Event ID is invalid, create new one
         event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
-        sheet.getRange(row, 8).setValue(event.getId());
+        sheet.getRange(row, 7).setValue(event.getId());
         var icsLinkCreated2 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-        sheet.getRange(row, 12).setValue(icsLinkCreated2);
+        sheet.getRange(row, 11).setValue(icsLinkCreated2);
         ui.alert('Calendar event created successfully!');
       }
     } else {
       // Create new event
       event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
-      sheet.getRange(row, 8).setValue(event.getId());
+      sheet.getRange(row, 7).setValue(event.getId());
       var icsLinkCreated3 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-      sheet.getRange(row, 12).setValue(icsLinkCreated3);
+      sheet.getRange(row, 11).setValue(icsLinkCreated3);
       ui.alert('Calendar event created successfully!');
     }
     
@@ -494,7 +485,7 @@ function syncAllToCalendar() {
     return;
   }
   
-  var data = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+  var data = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
   var calendar = CalendarApp.getDefaultCalendar();
   var successCount = 0;
   var errorCount = 0;
@@ -504,13 +495,12 @@ function syncAllToCalendar() {
     var course = data[i][1];
     var dueDate = data[i][2];
     var time = data[i][3];
-    var priority = data[i][4];
-    var status = data[i][5];
-    var notes = data[i][6];
-    var eventId = data[i][7];
-    var isQuiz = data[i][8];
-    var isMidterm = data[i][9];
-    var isFinal = data[i][10];
+    var status = data[i][4];
+    var notes = data[i][5];
+    var eventId = data[i][6];
+    var isQuiz = data[i][7];
+    var isMidterm = data[i][8];
+    var isFinal = data[i][9];
     
     // Skip empty rows
     if (!assignmentName || !dueDate) {
@@ -533,7 +523,6 @@ function syncAllToCalendar() {
       var eventTitle = (course ? '[' + course + '] ' : '') + assignmentName;
       var eventDescription = 'Assignment: ' + assignmentName + '\n';
       if (course) eventDescription += 'Course: ' + course + '\n';
-      if (priority) eventDescription += 'Priority: ' + priority + '\n';
       if (status) eventDescription += 'Status: ' + status + '\n';
       if (notes) eventDescription += 'Notes: ' + notes + '\n';
       if (isQuiz === true) eventDescription += 'Type: Quiz\n';
@@ -551,24 +540,24 @@ function syncAllToCalendar() {
             event.setTime(eventDate, new Date(eventDate.getTime() + 60*60000));
             event.setDescription(eventDescription);
             var icsLinkU = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-            sheet.getRange(i + 2, 12).setValue(icsLinkU);
+            sheet.getRange(i + 2, 11).setValue(icsLinkU);
           } else {
             event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
-            sheet.getRange(i + 2, 8).setValue(event.getId());
+            sheet.getRange(i + 2, 7).setValue(event.getId());
             var icsLinkC1 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-            sheet.getRange(i + 2, 12).setValue(icsLinkC1);
+            sheet.getRange(i + 2, 11).setValue(icsLinkC1);
           }
         } catch (e) {
           event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
-          sheet.getRange(i + 2, 8).setValue(event.getId());
+          sheet.getRange(i + 2, 7).setValue(event.getId());
           var icsLinkC2 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-          sheet.getRange(i + 2, 12).setValue(icsLinkC2);
+          sheet.getRange(i + 2, 11).setValue(icsLinkC2);
         }
       } else {
         event = createNewEvent(calendar, eventTitle, eventDate, eventDescription);
-        sheet.getRange(i + 2, 8).setValue(event.getId());
+        sheet.getRange(i + 2, 7).setValue(event.getId());
         var icsLinkC3 = createICSFileForEvent(eventTitle, eventDate, new Date(eventDate.getTime() + 60*60000), eventDescription);
-        sheet.getRange(i + 2, 12).setValue(icsLinkC3);
+        sheet.getRange(i + 2, 11).setValue(icsLinkC3);
       }
       
       successCount++;
@@ -582,6 +571,9 @@ function syncAllToCalendar() {
            successCount + ' assignment(s) synced successfully.\n' + 
            errorCount + ' error(s) occurred.',
            ui.ButtonSet.OK);
+  
+  // Auto-group by week after sync
+  groupByWeek();
 }
 
 function formatICSDate(dt) {
@@ -684,7 +676,6 @@ function setupClassesAndRecurringAssignments() {
         courseName,
         due,
         Utilities.formatDate(due, Session.getScriptTimeZone(), 'HH:mm'),
-        'Medium',
         'Not Started',
         'Auto-generated',
         '',
@@ -699,6 +690,9 @@ function setupClassesAndRecurringAssignments() {
     }
   }
   ui.alert('Recurring assignments generated.');
+  
+  // Auto-group by week
+  groupByWeek();
 }
 
 /**
@@ -722,11 +716,14 @@ function createSampleQuarter() {
   
   // Add sample data
   var sampleData = [
-    ['Math Problem Set 5', 'MATH 101', new Date('2026-01-25'), '23:59', 'High', 'Not Started', 'Chapter 5 exercises', '', false, false, false, ''],
-    ['Literature Essay', 'ENG 201', new Date('2026-01-28'), '17:00', 'High', 'In Progress', 'Compare two novels', '', false, false, false, ''],
-    ['Lab Report', 'CHEM 105', new Date('2026-02-01'), '14:00', 'Medium', 'Not Started', 'Experiment 3 writeup', '', false, false, false, ''],
-    ['History Reading', 'HIST 150', new Date('2026-02-05'), '12:00', 'Low', 'Completed', 'Chapters 8-10', '', false, false, false, '']
+    ['Math Problem Set 5', 'MATH 101', new Date('2026-01-25'), '23:59', 'Not Started', 'Chapter 5 exercises', '', false, false, false, ''],
+    ['Literature Essay', 'ENG 201', new Date('2026-01-28'), '17:00', 'In Progress', 'Compare two novels', '', false, false, false, ''],
+    ['Lab Report', 'CHEM 105', new Date('2026-02-01'), '14:00', 'Not Started', 'Experiment 3 writeup', '', false, false, false, ''],
+    ['History Reading', 'HIST 150', new Date('2026-02-05'), '12:00', 'Completed', 'Chapters 8-10', '', false, false, false, '']
   ];
   
   sheet.getRange(2, 1, sampleData.length, sampleData[0].length).setValues(sampleData);
+  
+  // Auto-group by week
+  groupByWeek();
 }

@@ -10,7 +10,9 @@ function onOpen() {
       .addItem('Create New Quarter Sheet', 'createQuarterSheet')
       .addItem('Add Assignment to Calendar', 'addAssignmentToCalendar')
       .addItem('Sync All Assignments to Calendar', 'syncAllToCalendar')
-  .addItem('Setup Classes & Recurring', 'setupClassesAndRecurringAssignments')
+      .addItem('Manage Classes', 'openClassManager')
+      .addItem('Group Assignments by Class', 'groupByClass')
+      .addItem('Setup Classes & Recurring', 'setupClassesAndRecurringAssignments')
       .addToUi();
 }
 
@@ -50,10 +52,38 @@ function createQuarterSheet() {
   // Set up headers
   setupSheetHeaders(sheet);
   
-  // Format the sheet
-  formatSheet(sheet);
+  // Ask how many classes and their names for this term
+  var classesCountResp = ui.prompt('Classes This Term', 'How many classes are you taking this term?', ui.ButtonSet.OK_CANCEL);
+  if (classesCountResp.getSelectedButton() != ui.Button.OK) {
+    return;
+  }
+  var classesCount = parseInt(classesCountResp.getResponseText(), 10);
+  if (!classesCount || classesCount <= 0 || classesCount > 20) {
+    ui.alert('Please enter a valid number of classes (1-20).');
+    return;
+  }
+  var classes = [];
+  for (var i = 1; i <= classesCount; i++) {
+    var classResp = ui.prompt('Class ' + i, 'Enter class name:', ui.ButtonSet.OK_CANCEL);
+    if (classResp.getSelectedButton() != ui.Button.OK) {
+      return;
+    }
+    var className = classResp.getResponseText().trim();
+    if (!className) {
+      ui.alert('Class name cannot be empty. Try again.');
+      i--;
+      continue;
+    }
+    classes.push(className);
+  }
   
-  ui.alert('Success', 'Sheet "' + quarterName + '" has been created!', ui.ButtonSet.OK);
+  // Format the sheet
+  formatSheet(sheet, classes);
+  
+  // Store classes in sheet properties
+  setSheetClasses(sheet, classes);
+  
+  ui.alert('Success', 'Sheet "' + quarterName + '" has been created!\nClasses: ' + classes.join(', '), ui.ButtonSet.OK);
 }
 
 /**
@@ -90,7 +120,7 @@ function setupSheetHeaders(sheet) {
 /**
  * Formats the sheet with proper column widths and data validation
  */
-function formatSheet(sheet) {
+function formatSheet(sheet, classes) {
   // Set column widths
   sheet.setColumnWidth(1, 200); // Assignment Name
   sheet.setColumnWidth(2, 150); // Course
@@ -109,31 +139,6 @@ function formatSheet(sheet) {
   var priorityRule = SpreadsheetApp.newDataValidation()
     .requireValueInList(['High', 'Medium', 'Low'], true)
     .setAllowInvalid(false)
-  
-  // Ask how many classes and their names for this term
-  var classesCountResp = ui.prompt('Classes This Term', 'How many classes are you taking this term?', ui.ButtonSet.OK_CANCEL);
-  if (classesCountResp.getSelectedButton() != ui.Button.OK) {
-    return;
-  }
-  var classesCount = parseInt(classesCountResp.getResponseText(), 10);
-  if (!classesCount || classesCount <= 0 || classesCount > 20) {
-    ui.alert('Please enter a valid number of classes (1-20).');
-    return;
-  }
-  var classes = [];
-  for (var i = 1; i <= classesCount; i++) {
-    var classResp = ui.prompt('Class ' + i, 'Enter class name:', ui.ButtonSet.OK_CANCEL);
-    if (classResp.getSelectedButton() != ui.Button.OK) {
-      return;
-    }
-    var className = classResp.getResponseText().trim();
-    if (!className) {
-      ui.alert('Class name cannot be empty. Try again.');
-      i--; // retry this index
-      continue;
-    }
-    classes.push(className);
-  }
     .build();
   sheet.getRange('E2:E1000').setDataValidation(priorityRule);
   
@@ -143,13 +148,6 @@ function formatSheet(sheet) {
     .setAllowInvalid(false)
     .build();
   sheet.getRange('F2:F1000').setDataValidation(statusRule);
-  
-  // Add conditional formatting for Priority
-  var highPriorityRule = SpreadsheetApp.newConditionalFormatRule()
-    .whenTextEqualTo('High')
-    .setBackground('#f4cccc')
-    .setRanges([sheet.getRange('E2:E1000')])
-    .build();
   
   // Set data validation for Course column based on entered classes
   try {
@@ -161,6 +159,13 @@ function formatSheet(sheet) {
   } catch (e) {
     Logger.log('Error setting course validation: ' + e.message);
   }
+  
+  // Add conditional formatting for Priority
+  var highPriorityRule = SpreadsheetApp.newConditionalFormatRule()
+    .whenTextEqualTo('High')
+    .setBackground('#f4cccc')
+    .setRanges([sheet.getRange('E2:E1000')])
+    .build();
   
   var mediumPriorityRule = SpreadsheetApp.newConditionalFormatRule()
     .whenTextEqualTo('Medium')
@@ -199,6 +204,147 @@ function formatSheet(sheet) {
 
   // Add alternating row colors
   sheet.getRange('A2:L1000').applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY);
+}
+
+/**
+ * Store classes in sheet properties
+ */
+function setSheetClasses(sheet, classes) {
+  var props = PropertiesService.getDocumentProperties();
+  var key = 'classes_' + sheet.getName();
+  props.setProperty(key, JSON.stringify(classes));
+}
+
+/**
+ * Retrieve classes from sheet properties
+ */
+function getSheetClasses(sheet) {
+  var props = PropertiesService.getDocumentProperties();
+  var key = 'classes_' + sheet.getName();
+  var stored = props.getProperty(key);
+  return stored ? JSON.parse(stored) : [];
+}
+
+/**
+ * Open a sidebar to manage classes
+ */
+function openClassManager() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var classes = getSheetClasses(sheet);
+  var html = HtmlService.createHtmlOutput(
+    '<style>' +
+    'body { font-family: Arial; padding: 10px; margin: 0; }' +
+    '.class-item { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #ddd; }' +
+    'button { padding: 4px 8px; margin-left: 5px; cursor: pointer; }' +
+    'input { width: 75%; padding: 5px; }' +
+    '.add-section { margin-bottom: 15px; }' +
+    '</style>' +
+    '<h3>Manage Classes</h3>' +
+    '<div class="add-section">' +
+    '<input type="text" id="newClass" placeholder="New class name">' +
+    '<button onclick="addClass()">Add</button>' +
+    '</div>' +
+    '<div id="classList"></div>' +
+    '<button onclick="save()" style="margin-top: 15px; width: 100%; padding: 8px; background: #4285f4; color: white; border: none; cursor: pointer;">Save & Close</button>' +
+    '<script>' +
+    'var classes = ' + JSON.stringify(classes) + ';' +
+    'function renderClasses() {' +
+    '  var html = "";' +
+    '  classes.forEach((c, i) => {' +
+    '    html += "<div class=\\"class-item\\"><span>" + c + "</span><button onclick=\\"deleteClass(" + i + ")\\"Delete</button></div>";' +
+    '  });' +
+    '  document.getElementById("classList").innerHTML = html;' +
+    '}' +
+    'function addClass() {' +
+    '  var input = document.getElementById("newClass");' +
+    '  if (input.value.trim()) {' +
+    '    classes.push(input.value.trim());' +
+    '    input.value = "";' +
+    '    renderClasses();' +
+    '  }' +
+    '}' +
+    'function deleteClass(i) {' +
+    '  classes.splice(i, 1);' +
+    '  renderClasses();' +
+    '}' +
+    'function save() {' +
+    '  google.script.run.saveClasses(classes);' +
+    '  google.script.host.close();' +
+    '}' +
+    'renderClasses();' +
+    '</script>'
+  );
+  SpreadsheetApp.getUi().showModelessDialog(html, 'Class Manager');
+}
+
+/**
+ * Save classes from sidebar
+ */
+function saveClasses(classes) {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  setSheetClasses(sheet, classes);
+  
+  // Update Course column validation
+  if (classes.length > 0) {
+    var courseRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(classes, true)
+      .setAllowInvalid(false)
+      .build();
+    sheet.getRange('B2:B1000').setDataValidation(courseRule);
+  }
+}
+
+/**
+ * Group assignments by class name
+ */
+function groupByClass() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var lastRow = sheet.getLastRow();
+  
+  if (lastRow < 2) {
+    SpreadsheetApp.getUi().alert('No assignments to group.');
+    return;
+  }
+  
+  var data = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+  var grouped = {};
+  
+  // Group by course (column B, index 1)
+  for (var i = 0; i < data.length; i++) {
+    var course = data[i][1] || 'Uncategorized';
+    if (!grouped[course]) grouped[course] = [];
+    grouped[course].push(data[i]);
+  }
+  
+  // Sort groups alphabetically
+  var sortedCourses = Object.keys(grouped).sort();
+  
+  // Clear data rows
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, 12).clearContent();
+  }
+  
+  // Write sorted data back
+  var row = 2;
+  for (var c = 0; c < sortedCourses.length; c++) {
+    var course = sortedCourses[c];
+    var assignments = grouped[course];
+    
+    // Sort assignments by due date
+    assignments.sort(function(a, b) {
+      var dateA = new Date(a[2]) || new Date();
+      var dateB = new Date(b[2]) || new Date();
+      return dateA - dateB;
+    });
+    
+    // Write assignments for this course
+    for (var a = 0; a < assignments.length; a++) {
+      sheet.getRange(row, 1, 1, 12).setValues([assignments[a]]);
+      row++;
+    }
+  }
+  
+  SpreadsheetApp.getUi().alert('Assignments grouped and sorted by class!');
 }
 
 /**
@@ -570,7 +716,9 @@ function createSampleQuarter() {
   
   var sheet = ss.insertSheet(quarterName);
   setupSheetHeaders(sheet);
-  formatSheet(sheet);
+  var sampleClasses = ['MATH 101', 'ENG 201', 'CHEM 105', 'HIST 150'];
+  formatSheet(sheet, sampleClasses);
+  setSheetClasses(sheet, sampleClasses);
   
   // Add sample data
   var sampleData = [

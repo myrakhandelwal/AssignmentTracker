@@ -18,6 +18,13 @@ function onOpen() {
       .addItem('Manage Classes', 'openClassManager')
       .addItem('Setup Classes & Recurring', 'setupClassesAndRecurringAssignments')
       .addToUi();
+  
+  // Ensure Course column has dropdown based on stored classes for the active sheet
+  var activeSheet = SpreadsheetApp.getActiveSheet();
+  var classes = getSheetClasses(activeSheet);
+  if (classes && classes.length) {
+    applyCourseValidation(activeSheet, classes);
+  }
 }
 
 /**
@@ -101,29 +108,23 @@ function setupSheetHeaders(sheet) {
     'Assignment Name',
     'Course',
     'Due Date',
-    'Time',
-    'Status',
-    'Notes',
-    'Calendar Event ID',
-    'Quiz',
-    'Midterm',
-    'Final Exam',
-    'iCalendar File URL'
-  ];
+    try {
+      // Data validation for Status column
+      var statusRule = SpreadsheetApp.newDataValidation()
+        .requireValueInList(['Not Started', 'In Progress', 'Completed', 'Submitted'], true)
+        .setAllowInvalid(false)
+        .build();
+      sheet.getRange('E2:E1000').setDataValidation(statusRule);
+    } catch (e) {
+      Logger.log('Error setting status validation: ' + e.message);
+    }
   
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  
-  // Bold and freeze header row
-  sheet.getRange(1, 1, 1, headers.length)
-        .setFontWeight('bold')
-        .setBackground('#4285f4')
-        .setFontColor('#ffffff')
-        .setHorizontalAlignment('center');
-  
-  sheet.setFrozenRows(1);
-}
-
-/**
+    try {
+      // Data validation for Course column using classes
+      applyCourseValidation(sheet, classes);
+    } catch (e) {
+      Logger.log('Error setting course validation: ' + e.message);
+    }
  * Formats the sheet with proper column widths and data validation
  */
 function formatSheet(sheet, classes) {
@@ -194,6 +195,16 @@ function setSheetClasses(sheet, classes) {
   props.setProperty(key, JSON.stringify(classes));
 }
 
+// Apply dropdown validation to Course column using provided class list
+function applyCourseValidation(sheet, classes) {
+  if (!classes || !classes.length) return;
+  var courseRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(classes, true)
+    .setAllowInvalid(false)
+    .build();
+  sheet.getRange('B2:B1000').setDataValidation(courseRule);
+}
+
 /**
  * Retrieve classes from sheet properties
  */
@@ -262,15 +273,7 @@ function openClassManager() {
 function saveClasses(classes) {
   var sheet = SpreadsheetApp.getActiveSheet();
   setSheetClasses(sheet, classes);
-  
-  // Update Course column validation
-  if (classes.length > 0) {
-    var courseRule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(classes, true)
-      .setAllowInvalid(false)
-      .build();
-    sheet.getRange('B2:B1000').setDataValidation(courseRule);
-  }
+  applyCourseValidation(sheet, classes);
 }
 
 /**

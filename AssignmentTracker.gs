@@ -108,23 +108,22 @@ function setupSheetHeaders(sheet) {
     'Assignment Name',
     'Course',
     'Due Date',
-    try {
-      // Data validation for Status column
-      var statusRule = SpreadsheetApp.newDataValidation()
-        .requireValueInList(['Not Started', 'In Progress', 'Completed', 'Submitted'], true)
-        .setAllowInvalid(false)
-        .build();
-      sheet.getRange('E2:E1000').setDataValidation(statusRule);
-    } catch (e) {
-      Logger.log('Error setting status validation: ' + e.message);
-    }
-  
-    try {
-      // Data validation for Course column using classes
-      applyCourseValidation(sheet, classes);
-    } catch (e) {
-      Logger.log('Error setting course validation: ' + e.message);
-    }
+    'Time',
+    'Status',
+    'Notes',
+    'Calendar Event ID',
+    'Quiz',
+    'Midterm',
+    'Final Exam',
+    'iCalendar File URL'
+  ];
+
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange('A1:K1').setFontWeight('bold');
+  sheet.setFrozenRows(1);
+}
+
+/**
  * Formats the sheet with proper column widths and data validation
  */
 function formatSheet(sheet, classes) {
